@@ -1,0 +1,4 @@
+Instaliran Python 3.13.14 64-bit
+
+// instalirati library
+pip install firebird-driver dbfread

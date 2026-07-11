@@ -1,0 +1,53 @@
+; ============================================================
+; param.ini.example - PRIMJER konfiguracijske datoteke
+;
+; Kopirajte ovu datoteku u "param.ini" i popunite stvarnim
+; vrijednostima za vase racunalo. "param.ini" se NE commita u git
+; (vidi .gitignore) jer sadrzi lozinku za Firebird.
+; ============================================================
+
+[fiksne_vrijednosti]
+idposjed=1
+idsklad=1
+sisuser=5
+idfirme=1
+idrobacjenik=1
+idrobagrupe=8
+idrobafilter=3
+idrabgrupe=1
+
+; ID-jevi jedinica mjere u FB:MJERE tablici
+idmjerekom=2
+idmjeresat=5
+idmjerem=4
+idmjerekm=6
+
+; sifre poreza - kako se DBF sifra poreza mapira na Firebird sifru poreza (FB:POREZ:SIFPOR)
+dbfpdv25=25
+dbfpdv0=00
+fbpdv25=P25
+fbpdv0=P0
+
+; folder gdje se nalazi prva grupa .DBF datoteka (RACUNI.DBF, SUR.DBF, EIU_1.DBF)
+dir_rac=C:\PUTANJA\DO\NFA
+
+; folder gdje se nalazi druga grupa .DBF datoteka (PARTNERI.DBF, ARTIKLI.DBF, USLUGE.DBF)
+dir_baze=C:\PUTANJA\DO\BAZE
+
+; folder gdje se nalazi .FDB datoteka
+dir_fdb=C:\PUTANJA\DO\FIREBIRD\PODACI\
+
+; naziv .FDB datoteke
+fdb_file=IME_BAZE.FDB
+
+; kodna stranica DBF datoteka
+dbf_encoding=cp852
+
+[firebird]
+host=localhost
+port=3050
+user=SYSDBA
+password=UPISI_STVARNU_LOZINKU
+
+[import]
+batch_size=500
