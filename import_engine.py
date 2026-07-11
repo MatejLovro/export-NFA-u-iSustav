@@ -12,7 +12,7 @@ tijek opisan u proceduri:
      c. Kreiraj zaglavlje u VPRZG.
      d. Za svaku stavku iz SUR.DBF:
         - nadi/kreiraj artikl/uslugu u ROBA
-        - kreiraj stavku u VPRST
+        - kreiraj stavku u VPRST (ukljucujuci dodatni opis iz EIU_1.DBF)
      e. Commit cijelog racuna (glava+stavke = 1 transakcija).
         Ako bilo sto u koraku (b)-(d) pukne (osim nedostajuceg OIB-a) -
         rollback SAMO tog racuna, upisi u log, nastavi na sljedeci racun.
@@ -126,7 +126,7 @@ def resolve_kupac(con, cfg: Config, data: dbf_reader.DbfSourceData, racun: dict)
             "EMAIL": partner["TELEFON2"] or None,
             "KONTAKT": partner["KONT_OSOB"] or None,
             "KUPAC": "T",
-            "ERACUN_TIP": "E",
+            "ERACUN_TIP": "3",
             "TIP": 1,
             "ROKPLACANJA": 7,
             "NAKASI": "T",
@@ -246,11 +246,38 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
 
 
 # ------------------------------------------------------------------
+# Dodatni opisni tekst iz EIU_1.DBF (vezano preko SUR.DBF:SIFRA_VEZE)
+# ------------------------------------------------------------------
+
+def build_opis_robe(naziv: str, stavka: dict, eiu1_index: dict[str, list[str]]) -> str:
+    """
+    Gradi VPRST:OPISROBE - naziv artikla/usluge, s dodatnim tekstom iz
+    EIU_1.DBF nadovezanim preko CR+LF ako SUR.DBF:SIFRA_VEZE nije prazan.
+
+    Ako SIFRA_VEZE postoji ali odgovarajuci EIU_1 zapis ne postoji (poznat
+    slucaj - racun 357), po dogovoru se nastavlja SAMO s nazivom, bez
+    dodatnog teksta.
+    """
+    sifra_veze = (stavka.get("SIFRA_VEZE") or "").strip()
+    if not sifra_veze:
+        return naziv
+
+    dodatni_redovi = eiu1_index.get(sifra_veze)
+    if not dodatni_redovi:
+        return naziv
+
+    dijelovi = [naziv] + dodatni_redovi
+    opis = "\r\n".join(dijelovi)
+    return opis[:512]  # VPRST.OPISROBE je VARCHAR(512)
+
+
+# ------------------------------------------------------------------
 # Korak: stavka racuna (VPRST)
 # ------------------------------------------------------------------
 
 def create_vprst(con, cfg: Config, data: dbf_reader.DbfSourceData, idvprzg: int, brrac: int, idkupca: int, stavka: dict) -> None:
     idrobe, naziv, sif_porez = resolve_stavka_roba(con, cfg, data, stavka)
+    opis_robe = build_opis_robe(naziv, stavka, data.eiu1_index)
 
     kol = _to_decimal(stavka["KOLICINA"])
     fakcijena = _to_decimal(stavka["PROD_CIJEN"])
@@ -265,7 +292,7 @@ def create_vprst(con, cfg: Config, data: dbf_reader.DbfSourceData, idvprzg: int,
     fields = {
         "IDVPRZG": idvprzg,
         "IDROBE": idrobe,
-        "OPISROBE": naziv,
+        "OPISROBE": opis_robe,
         "IDSKLAD": cfg.idsklad,
         "VK": 260,
         "BRDOK": brrac,

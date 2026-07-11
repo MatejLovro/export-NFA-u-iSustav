@@ -7,6 +7,7 @@ Cita Clipper DBF izvorne tablice i priprema ih za uvoz:
   - PARTNERI.DBF - kupci, indeksirano po SIF_KUPCA (PK)
   - ARTIKLI.DBF  - artikli, indeksirano po KONTO (PK)
   - USLUGE.DBF   - usluge, indeksirano po SIF_USLU (PK)
+  - EIU_1.DBF    - dodatni opisni tekst, indeksirano po SIFRA_VEZE
 
 Sve tekstualne vrijednosti se automatski prolaze kroz convert_yuscii() pri
 citanju, OSIM polja PARTNERI.DBF:TELEFON2 (email adrese - '@' mora ostati
@@ -164,6 +165,30 @@ def load_usluge_index(path: str, encoding: str = "cp852") -> dict[str, dict]:
 
 
 # ------------------------------------------------------------------
+# EIU_1.DBF - dodatni opisni tekst vezan uz stavke racuna (SUR.DBF:SIFRA_VEZE)
+# ------------------------------------------------------------------
+
+def load_eiu1_index(path: str, encoding: str = "cp852") -> dict[str, list[str]]:
+    """
+    Cita EIU_1.DBF i vraca rjecnik {SIFRA_VEZE: [NAZIV1, NAZIV2, ...]}.
+
+    Jedna SIFRA_VEZE moze imati VISE redaka dodatnog teksta (potvrdeno na
+    stvarnim podacima - najcesce 1 redak, ali zna ih biti i do 5) - svi se
+    cuvaju redom kako su fizicki zapisani u DBF-u, jer se pri spajanju u
+    VPRST:OPISROBE moraju nadovezati tim redoslijedom.
+    """
+    table = _read_dbf(path, encoding)
+    index: dict[str, list[str]] = {}
+    for rec in table:
+        sifra = (rec.get("SIFRA_VEZE") or "").strip()
+        if not sifra:
+            continue
+        naziv = convert_yuscii(rec.get("NAZIV"), convert_at=True)
+        index.setdefault(sifra, []).append(naziv)
+    return index
+
+
+# ------------------------------------------------------------------
 # Objedinjeni kontejner - ucita sve izvorne tablice odjednom
 # ------------------------------------------------------------------
 
@@ -175,6 +200,7 @@ class DbfSourceData:
     partneri_index: dict[str, dict]
     artikli_index: dict[str, dict]
     usluge_index: dict[str, dict]
+    eiu1_index: dict[str, list[str]]
 
 
 def load_all(
@@ -200,6 +226,7 @@ def load_all(
     partneri_index = load_partneri_index(path_join(dir_baze, "PARTNERI.DBF"), encoding)
     artikli_index = load_artikli_index(path_join(dir_baze, "ARTIKLI.DBF"), encoding)
     usluge_index = load_usluge_index(path_join(dir_baze, "USLUGE.DBF"), encoding)
+    eiu1_index = load_eiu1_index(path_join(dir_rac, "EIU_1.DBF"), encoding)
 
     return DbfSourceData(
         racuni=racuni,
@@ -207,4 +234,5 @@ def load_all(
         partneri_index=partneri_index,
         artikli_index=artikli_index,
         usluge_index=usluge_index,
+        eiu1_index=eiu1_index,
     )
