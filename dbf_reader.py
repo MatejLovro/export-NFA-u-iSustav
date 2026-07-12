@@ -11,7 +11,8 @@ Cita Clipper DBF izvorne tablice i priprema ih za uvoz:
 
 Sve tekstualne vrijednosti se automatski prolaze kroz convert_yuscii() pri
 citanju, OSIM polja PARTNERI.DBF:TELEFON2 (email adrese - '@' mora ostati
-doslovni znak).
+doslovni znak). PARTNERI.DBF:KONT_OSOB koristi pametnu convert_yuscii_smart()
+koja stiti prepoznate email adrese, ali i dalje konvertira '@' u imenima.
 
 Tablice su relativno male (nekoliko stotina do nekoliko tisuca zapisa), pa se
 u cijelosti ucitavaju u memoriju - nema potrebe za DBF indeksnim (.NTX/.CDX)
@@ -25,7 +26,7 @@ from typing import Optional
 
 from dbfread import DBF
 
-from text_utils import convert_yuscii
+from text_utils import convert_yuscii, convert_yuscii_smart
 
 
 class DbfReadError(Exception):
@@ -38,14 +39,25 @@ _NO_AT_CONVERSION_FIELDS = {
     ("PARTNERI", "TELEFON2"),
 }
 
+# Polja koja MIJESAJU slobodan tekst (gdje '@' moze biti zamjena za 'Ž')
+# s prigodno upisanim email adresama (gdje '@' mora ostati doslovan) -
+# koristi se pametno prepoznavanje email obrasca umjesto grubog iskljucenja.
+_SMART_AT_FIELDS = {
+    ("PARTNERI", "KONT_OSOB"),
+}
+
 
 def _convert_record(table_name: str, record: dict) -> dict:
     """Vraca kopiju zapisa s konvertiranim tekstualnim poljima (YUSCII -> hrvatska slova)."""
     result = {}
     for key, value in record.items():
         if isinstance(value, str):
-            convert_at = (table_name, key) not in _NO_AT_CONVERSION_FIELDS
-            result[key] = convert_yuscii(value, convert_at=convert_at)
+            field_key = (table_name, key)
+            if field_key in _SMART_AT_FIELDS:
+                result[key] = convert_yuscii_smart(value)
+            else:
+                convert_at = field_key not in _NO_AT_CONVERSION_FIELDS
+                result[key] = convert_yuscii(value, convert_at=convert_at)
         else:
             result[key] = value
     return result

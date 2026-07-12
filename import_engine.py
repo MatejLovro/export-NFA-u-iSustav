@@ -9,7 +9,7 @@ tijek opisan u proceduri:
      a. Ako vec postoji u VPRZG (BRDOK+VK=260) - preskoci.
      b. Nadi/kreiraj kupca u TVRTKE (po OIB-u iz PARTNERI.DBF).
         Ako kupac nema OIB - PREKINI CIJELI IMPORT (ImportAbortError).
-     c. Kreiraj zaglavlje u VPRZG.
+     c. Kreiraj zaglavlje u VPRZG (ukljucujuci storno-polja ako je primjenjivo).
      d. Za svaku stavku iz SUR.DBF:
         - nadi/kreiraj artikl/uslugu u ROBA
         - kreiraj stavku u VPRST (ukljucujuci dodatni opis iz EIU_1.DBF)
@@ -83,6 +83,38 @@ def map_jedinica_mjere(cfg: Config, jed_mjere_raw: str) -> int:
     return cfg.idmjerekom
 
 
+def _extract_primary_email(value: str) -> Optional[str]:
+    """
+    PARTNERI.DBF:TELEFON2 zna sadrzavati vise email adresa odvojenih s ';'
+    (najcesce) ili ':' (rijetko, ali potvrdeno na stvarnim podacima).
+    TVRTKE.EMAIL je VARCHAR(40) i ne moze primiti sve odjednom, pa uzimamo
+    samo PRVU adresu, uz sigurnosni truncate na 40 znakova za slucaj da
+    i pojedinacna adresa (bez razdjelnika) negdje bude preduga.
+    """
+    import re
+
+    v = (value or "").strip()
+    if not v:
+        return None
+    prva = re.split(r"[;:]", v)[0].strip()
+    return prva[:40] if prva else None
+
+
+def _extract_primary_kontakt(value: str) -> Optional[str]:
+    """
+    PARTNERI.DBF:KONT_OSOB je slobodno-tekstualno polje koje zna sadrzavati
+    vise unosa odvojenih s ';' (imena, adrese, telefoni, email adrese
+    izmijesano). TVRTKE.KONTAKT je VARCHAR(40), pa uzimamo samo prvi unos
+    (prije prvog ';') i truncate-amo na 40 znakova kao sigurnosnu mjeru
+    za dulje slobodne bilješke bez ';'.
+    """
+    v = (value or "").strip()
+    if not v:
+        return None
+    prvi = v.split(";")[0].strip()
+    return prvi[:40] if prvi else None
+
+
 def _safe_int(value: str) -> Optional[int]:
     """Pokusava pretvoriti tekst u int (npr. PTT/postbroj); vraca None ako nije cist broj."""
     v = (value or "").strip()
@@ -123,8 +155,8 @@ def resolve_kupac(con, cfg: Config, data: dbf_reader.DbfSourceData, racun: dict)
             "POSTBROJ": _safe_int(partner["PTT"]),
             "POSTMJESTO": partner["MJESTO"] or None,
             "DRZAVA": "Hrvatska",
-            "EMAIL": partner["TELEFON2"] or None,
-            "KONTAKT": partner["KONT_OSOB"] or None,
+            "EMAIL": _extract_primary_email(partner["TELEFON2"]),
+            "KONTAKT": _extract_primary_kontakt(partner["KONT_OSOB"]),
             "KUPAC": "T",
             "ERACUN_TIP": "3",
             "TIP": 1,
@@ -242,6 +274,16 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
         "IZNPOR": iznpor,
         "IZNBEZPOR": iznbezpor,
     }
+
+    # Stornirani racuni: RACUNI.DBF:BROJ_ORIG nije prazan (0/None) -> ovo je dio
+    # storno-para (original ILI storno-dokument, pravilo se primjenjuje na OBA).
+    broj_orig = racun.get("BROJ_ORIG")
+    if broj_orig:
+        fields["STORNODOK"] = broj_orig
+        fields["STORNODATE"] = sada  # isti podatak kao SISDATE
+        fields["STORNOUSER"] = cfg.sisuser
+        fields["ERACUN_STATUS"] = -10  # overrida default -20
+
     return firebird_client.insert_vprzg(con, fields)
 
 

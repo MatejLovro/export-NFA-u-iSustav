@@ -26,6 +26,8 @@ email adrese, pa '@' tamo mora ostati doslovni 'at' znak).
 
 from __future__ import annotations
 
+import re
+
 # Osnovna mapa zamjenskih znakova -> ispravna hrvatska slova.
 # Redoslijed namjerno ne igra ulogu jer je preslikavanje 1-na-1 po znaku.
 _YUSCII_MAP = {
@@ -67,3 +69,30 @@ def convert_yuscii(text: str | None, convert_at: bool = True) -> str:
         return text
     table = _TRANSLATE_TABLE_WITH_AT if convert_at else _TRANSLATE_TABLE
     return text.translate(table)
+
+
+_EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def convert_yuscii_smart(text: str | None) -> str:
+    """
+    Kao convert_yuscii(), ali '@' se konvertira u 'Ž' SAMO ako NIJE dio
+    prepoznatljive email adrese (oblika rijec@rijec.tld). Koristi se za
+    polja koja mijesaju slobodni tekst (gdje '@' moze biti zamjena za
+    slovo Ž, npr. imena) s prigodno upisanim email adresama (gdje '@'
+    mora ostati doslovan) - npr. PARTNERI.DBF:KONT_OSOB.
+    """
+    if not isinstance(text, str):
+        return text
+
+    emails: list[str] = []
+
+    def _mask(m: re.Match) -> str:
+        emails.append(m.group(0))
+        return f"\x00EMAIL{len(emails) - 1}\x00"
+
+    masked = _EMAIL_PATTERN.sub(_mask, text)
+    converted = convert_yuscii(masked, convert_at=True)
+    for i, email in enumerate(emails):
+        converted = converted.replace(f"\x00EMAIL{i}\x00", email)
+    return converted
