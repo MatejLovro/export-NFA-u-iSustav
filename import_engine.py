@@ -230,7 +230,8 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
     sada = datetime.now()
 
     dan_plac = racun["DAN_PLAC"] or 0
-    datval = danas + timedelta(days=dan_plac)
+    datisp = racun["DATUM"] or danas
+    datval = datisp + timedelta(days=dan_plac)
 
     godina = racun["DATUM"].year if racun["DATUM"] else danas.year
     poziv = f"{brrac}-{godina}"
@@ -248,7 +249,7 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
         "DATDOK": danas,
         "DATDANA": dan_plac,
         "DATVAL": datval,
-        "DATISP": racun["DATUM"],
+        "DATISP": datisp,
         "IDPOSJED": cfg.idposjed,
         "IDSKLAD": cfg.idsklad,
         "IDROBACJENIK": cfg.idrobacjenik,
@@ -285,7 +286,6 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
         fields["ERACUN_STATUS"] = -10  # overrida default -20
 
     return firebird_client.insert_vprzg(con, fields)
-
 
 # ------------------------------------------------------------------
 # Dodatni opisni tekst iz EIU_1.DBF (vezano preko SUR.DBF:SIFRA_VEZE)
