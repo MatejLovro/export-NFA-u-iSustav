@@ -140,6 +140,13 @@ def find_roba(con: Connection, idfirme: int, barcode: str) -> Optional[int]:
     row = cur.fetchone()
     return row[0] if row else None
 
+def find_roba_with_tip(con: Connection, idfirme: int, barcode: str) -> Optional[tuple[int, int]]:
+    """Vraca (IDROBE, TIP) ako zapis s danim (IDFIRME, BARCODE) postoji, inace None."""
+    cur = con.cursor()
+    cur.execute("SELECT IDROBE, TIP FROM ROBA WHERE IDFIRME = ? AND BARCODE = ?", (idfirme, barcode))
+    row = cur.fetchone()
+    return (row[0], row[1]) if row else None
+
 
 def create_roba(con: Connection, fields: dict) -> int:
     """
@@ -152,15 +159,33 @@ def create_roba(con: Connection, fields: dict) -> int:
     _insert_row(con, "ROBA", fields)
     return new_id
 
-
 def get_or_create_roba(
     con: Connection, idfirme: int, source: str, sifra: str, build_fields: Callable[[], dict]
 ) -> int:
     """
-    Trazi robu po (IDFIRME, BARCODE=prefiks+sifra). Ako ne postoji, gradi
-    polja preko build_fields() i kreira novi zapis.
+    Trazi robu u dva koraka, pa ako ne nadje - kreira novu (s prefiksiranim BARCODE):
+
+    1. NAJPRIJE trazi "goli" kod bez prefiksa (BARCODE=sifra) - radi
+       kompatibilnosti s postojecim FB:ROBA zapisima koji su nastali PRIJE
+       ovog alata (npr. rucno uneseni, bez A-/U- prefiksa). Ako se nade i
+       TIP se poklapa s ocekivanim (artikl=2 / usluga=3), koristi taj zapis.
+       Ako TIP NE odgovara (goli kod je "zauzet" od strane drugog tipa robe
+       - isti problem kao sukob sifri u DBF-u), preskace se i ide na korak 2.
+    2. Ako korak 1 ne uspije, trazi/kreira PREFIKSIRANI kod (A-sifra ili
+       U-sifra) kao dosad - ovo je "namespace" koji ovaj alat sam kontrolira,
+       pa tu sukoba ne moze biti.
+
     Vraca IDROBE (postojeci ili novododijeljeni).
     """
+    tip_roba = 2 if source == "artikl" else 3
+
+    goli = find_roba_with_tip(con, idfirme, sifra)
+    if goli is not None:
+        idrobe, postojeci_tip = goli
+        if postojeci_tip == tip_roba:
+            return idrobe
+        # goli kod postoji, ali je krivog tipa - pada na prefiksiranu pretragu
+
     barcode = roba_barcode(source, sifra)
     existing = find_roba(con, idfirme, barcode)
     if existing is not None:
