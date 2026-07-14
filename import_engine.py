@@ -55,6 +55,7 @@ def _log(stats: ImportStats, log_callback: Callable[[str], None], msg: str) -> N
 # Mapiranje sifrarnika (porez, jedinica mjere)
 # ------------------------------------------------------------------
 
+
 def map_porez_sifra(cfg: Config, sif_porez_raw: str) -> str:
     """Mapira DBF sifru poreza u FB sifru poreza. Nestandardne vrijednosti (ne '25' ni '00') tretiraju se kao 25%."""
     sif = (sif_porez_raw or "").strip()
@@ -115,6 +116,40 @@ def _extract_primary_kontakt(value: str) -> Optional[str]:
     return prvi[:40] if prvi else None
 
 
+def mod11_kontrolni_broj(digits: str) -> int:
+    """
+    Sluzbeni hrvatski MOD11 algoritam za kontrolni broj kod "poziva na broj"
+    (izvor: Narodne novine, Prilog 2 - Popis osnovnih modela za uplatu javnih
+    prihoda, tocka 3.1 MOD11). Potvrdeno na sluzbenom primjeru iz dokumenta
+    (01234560 -> KBR=0) i na 5 od 8 stvarnih primjera koje je dao korisnik.
+
+    Ponderira se s desna na lijevo pocevsi od pondera 2, uvecavajuci za 1 bez
+    ogranicenja (2,3,4,5,6,7,8,9,10,...). Ostatak dijeljenja sume sa 11:
+      - ako je ostatak 0 ili 1 -> kontrolni broj je 0
+      - inace -> kontrolni broj = 11 - ostatak
+    """
+    total = 0
+    ponder = 2
+    for ch in reversed(digits):
+        total += int(ch) * ponder
+        ponder += 1
+    ostatak = total % 11
+    if ostatak in (0, 1):
+        return 0
+    return 11 - ostatak
+
+
+def build_poziv(godina: int, brrac: int) -> str:
+    """
+    Gradi VPRZG:POZIV u formatu <godina>-<broj_racuna><kontrolni_broj>,
+    gdje se kontrolni broj racuna preko mod11_kontrolni_broj() nad
+    spojenim znamenkama godine i broja racuna (bez paddinga).
+    """
+    digits = f"{godina}{brrac}"
+    kontrolni = mod11_kontrolni_broj(digits)
+    return f"{godina}-{brrac}{kontrolni}"
+
+
 def _safe_int(value: str) -> Optional[int]:
     """Pokusava pretvoriti tekst u int (npr. PTT/postbroj); vraca None ako nije cist broj."""
     v = (value or "").strip()
@@ -131,6 +166,7 @@ def _to_decimal(value) -> Decimal:
 # ------------------------------------------------------------------
 # Korak: kupac (TVRTKE)
 # ------------------------------------------------------------------
+
 
 def resolve_kupac(con, cfg: Config, data: dbf_reader.DbfSourceData, racun: dict) -> int:
     sif_kupca = racun["SIF_KUPCA"]
@@ -173,7 +209,10 @@ def resolve_kupac(con, cfg: Config, data: dbf_reader.DbfSourceData, racun: dict)
 # Korak: artikl/usluga (ROBA)
 # ------------------------------------------------------------------
 
-def resolve_stavka_roba(con, cfg: Config, data: dbf_reader.DbfSourceData, stavka: dict) -> tuple[int, str, str]:
+
+def resolve_stavka_roba(
+    con, cfg: Config, data: dbf_reader.DbfSourceData, stavka: dict
+) -> tuple[int, str, str]:
     """Vraca (idrobe, naziv, sif_porez) za danu stavku racuna (artikl ili usluga)."""
     sif_uslu = stavka["SIF_USLU"]
     tip_usluge = stavka["TIP_USLU"]
@@ -182,14 +221,20 @@ def resolve_stavka_roba(con, cfg: Config, data: dbf_reader.DbfSourceData, stavka
         source, tip_roba = "artikl", 2
         rec = data.artikli_index.get(sif_uslu)
         if rec is None:
-            raise ImportRecordError(f"Artikl sa sifrom '{sif_uslu}' ne postoji u ARTIKLI.DBF")
+            raise ImportRecordError(
+                f"Artikl sa sifrom '{sif_uslu}' ne postoji u ARTIKLI.DBF"
+            )
     elif tip_usluge == "U":
         source, tip_roba = "usluga", 3
         rec = data.usluge_index.get(sif_uslu)
         if rec is None:
-            raise ImportRecordError(f"Usluga sa sifrom '{sif_uslu}' ne postoji u USLUGE.DBF")
+            raise ImportRecordError(
+                f"Usluga sa sifrom '{sif_uslu}' ne postoji u USLUGE.DBF"
+            )
     else:
-        raise ImportRecordError(f"Nepoznat TIP_USLU='{tip_usluge}' u stavci racuna (ocekivano 'R' ili 'U')")
+        raise ImportRecordError(
+            f"Nepoznat TIP_USLU='{tip_usluge}' u stavci racuna (ocekivano 'R' ili 'U')"
+        )
 
     naziv = rec["NAZIV"]
     jed_mjere = rec["JED_MJERE"]
@@ -216,7 +261,9 @@ def resolve_stavka_roba(con, cfg: Config, data: dbf_reader.DbfSourceData, stavka
             "SISDATE": datetime.now(),
         }
 
-    idrobe = firebird_client.get_or_create_roba(con, cfg.idfirme, source, sif_uslu, build_fields)
+    idrobe = firebird_client.get_or_create_roba(
+        con, cfg.idfirme, source, sif_uslu, build_fields
+    )
     return idrobe, naziv, sif_porez
 
 
@@ -224,7 +271,10 @@ def resolve_stavka_roba(con, cfg: Config, data: dbf_reader.DbfSourceData, stavka
 # Korak: zaglavlje racuna (VPRZG)
 # ------------------------------------------------------------------
 
-def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[dict]) -> int:
+
+def create_vprzg(
+    con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[dict]
+) -> int:
     brrac = racun["BROJ_RACUN"]
     danas = date.today()
     sada = datetime.now()
@@ -234,7 +284,7 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
     datval = datisp + timedelta(days=dan_plac)
 
     godina = racun["DATUM"].year if racun["DATUM"] else danas.year
-    poziv = f"{brrac}-{godina}"
+    poziv = build_poziv(godina, brrac)
 
     iznrab = sum((_to_decimal(s["RABA"]) for s in stavke_dbf), Decimal("0"))
     iznpor = sum((_to_decimal(s["PORE"]) for s in stavke_dbf), Decimal("0"))
@@ -256,7 +306,7 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
         "ZASTAMPU": "F",
         "KNJIZENO": "T",
         "STORNO": "F",
-        "MODEL": "02",
+        "MODEL": "01",
         "POZIV": poziv,
         "TIPIFE": 1,
         "KOLONAIFE": 1,
@@ -287,9 +337,11 @@ def create_vprzg(con, cfg: Config, racun: dict, idkupca: int, stavke_dbf: list[d
 
     return firebird_client.insert_vprzg(con, fields)
 
+
 # ------------------------------------------------------------------
 # Dodatni opisni tekst iz EIU_1.DBF (vezano preko SUR.DBF:SIFRA_VEZE)
 # ------------------------------------------------------------------
+
 
 def build_opis_robe(naziv: str, stavka: dict, eiu1_index: dict[str, list[str]]) -> str:
     """
@@ -317,7 +369,16 @@ def build_opis_robe(naziv: str, stavka: dict, eiu1_index: dict[str, list[str]]) 
 # Korak: stavka racuna (VPRST)
 # ------------------------------------------------------------------
 
-def create_vprst(con, cfg: Config, data: dbf_reader.DbfSourceData, idvprzg: int, brrac: int, idkupca: int, stavka: dict) -> None:
+
+def create_vprst(
+    con,
+    cfg: Config,
+    data: dbf_reader.DbfSourceData,
+    idvprzg: int,
+    brrac: int,
+    idkupca: int,
+    stavka: dict,
+) -> None:
     idrobe, naziv, sif_porez = resolve_stavka_roba(con, cfg, data, stavka)
     opis_robe = build_opis_robe(naziv, stavka, data.eiu1_index)
 
@@ -359,13 +420,18 @@ def create_vprst(con, cfg: Config, data: dbf_reader.DbfSourceData, idvprzg: int,
 # Glavna procedura
 # ------------------------------------------------------------------
 
-def run_import(cfg: Config, broj1: int, broj2: int, log_callback: Callable[[str], None] = print) -> ImportStats:
+
+def run_import(
+    cfg: Config, broj1: int, broj2: int, log_callback: Callable[[str], None] = print
+) -> ImportStats:
     if broj1 > broj2:
         raise ValueError("broj1 mora biti <= broj2")
 
     stats = ImportStats()
     _log(stats, log_callback, f"Ucitavam DBF podatke za racune {broj1}-{broj2}...")
-    data = dbf_reader.load_all(cfg.dir_rac, cfg.dir_baze, broj1, broj2, cfg.dbf_encoding)
+    data = dbf_reader.load_all(
+        cfg.dir_rac, cfg.dir_baze, broj1, broj2, cfg.dbf_encoding
+    )
     _log(stats, log_callback, f"Pronadeno {len(data.racuni)} racuna u rasponu.")
 
     con = firebird_client.connect(cfg)
@@ -387,7 +453,11 @@ def run_import(cfg: Config, broj1: int, broj2: int, log_callback: Callable[[str]
 
                 con.commit()
                 stats.uvezeno += 1
-                _log(stats, log_callback, f"Racun {brrac}: uvezen (IDVPRZG={idvprzg}, {len(stavke_dbf)} stavki).")
+                _log(
+                    stats,
+                    log_callback,
+                    f"Racun {brrac}: uvezen (IDVPRZG={idvprzg}, {len(stavke_dbf)} stavki).",
+                )
 
             except ImportAbortError as e:
                 con.rollback()
@@ -400,13 +470,18 @@ def run_import(cfg: Config, broj1: int, broj2: int, log_callback: Callable[[str]
                 continue
             except Exception as e:
                 con.rollback()
-                _log(stats, log_callback, f"Racun {brrac}: NEOCEKIVANA GRESKA, preskacem - {type(e).__name__}: {e}")
+                _log(
+                    stats,
+                    log_callback,
+                    f"Racun {brrac}: NEOCEKIVANA GRESKA, preskacem - {type(e).__name__}: {e}",
+                )
                 stats.gresaka += 1
                 continue
 
         _log(
-            stats, log_callback,
-            f"\nGotovo. Uvezeno: {stats.uvezeno}, preskoceno (vec postoje): {stats.preskoceno_postojeci}, greske: {stats.gresaka}"
+            stats,
+            log_callback,
+            f"\nGotovo. Uvezeno: {stats.uvezeno}, preskoceno (vec postoje): {stats.preskoceno_postojeci}, greske: {stats.gresaka}",
         )
         return stats
     finally:
