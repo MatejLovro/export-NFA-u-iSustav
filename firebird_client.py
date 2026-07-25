@@ -119,18 +119,19 @@ def get_or_create_tvrtka(con: Connection, oib: str, build_fields: Callable[[], d
 
 def roba_barcode(source: str, sifra: str) -> str:
     """
-    Gradi BARCODE vrijednost za ROBA s prefiksom ovisno o izvoru, da se
-    izbjegne sukob sifri artikala i usluga (vidi napomenu na vrhu datoteke).
-
-    source: 'artikl' ili 'usluga'
+    Zadani (ne-sukobljeni) BARCODE za ROBA:
+      - artikl  -> goli sifra, bez prefiksa
+      - usluga  -> UVIJEK "U-" + sifra
+    Koristi se u build_fields() kao pocetna vrijednost; get_or_create_roba
+    je moze naknadno preinaciti u "A-"+sifra SAMO za artikl u slucaju
+    sukoba s postojecim zapisom krivog tipa (vidi dolje).
     """
     if source == "artikl":
-        prefix = "A-"
+        return sifra
     elif source == "usluga":
-        prefix = "U-"
+        return f"U-{sifra}"
     else:
         raise ValueError(f"Nepoznat source: {source!r} (ocekivano 'artikl' ili 'usluga')")
-    return f"{prefix}{sifra}"
 
 
 def find_roba(con: Connection, idfirme: int, barcode: str) -> Optional[int]:
@@ -139,6 +140,7 @@ def find_roba(con: Connection, idfirme: int, barcode: str) -> Optional[int]:
     cur.execute("SELECT IDROBE FROM ROBA WHERE IDFIRME = ? AND BARCODE = ?", (idfirme, barcode))
     row = cur.fetchone()
     return row[0] if row else None
+
 
 def find_roba_with_tip(con: Connection, idfirme: int, barcode: str) -> Optional[tuple[int, int]]:
     """Vraca (IDROBE, TIP) ako zapis s danim (IDFIRME, BARCODE) postoji, inace None."""
@@ -162,6 +164,38 @@ def create_roba(con: Connection, fields: dict) -> int:
 def get_or_create_roba(
     con: Connection, idfirme: int, source: str, sifra: str, build_fields: Callable[[], dict]
 ) -> int:
+    """
+    1. Trazi goli kod (bez prefiksa). Ako postoji I tip odgovara -> koristi ga.
+    2. Ako goli kod postoji ali je KRIVOG tipa (sukob) -> koristi prefiks
+       (A- za artikl, U- za uslugu) kao fallback - trazi/kreira taj zapis.
+    3. Ako goli kod uopce ne postoji:
+       - artikl -> kreira se BEZ prefiksa (goli kod je slobodan)
+       - usluga -> UVIJEK se kreira S "U-" prefiksom (ne samo kod sukoba)
+    """
+    tip_roba = 2 if source == "artikl" else 3
+
+    goli = find_roba_with_tip(con, idfirme, sifra)
+    if goli is not None:
+        idrobe, postojeci_tip = goli
+        if postojeci_tip == tip_roba:
+            return idrobe
+        # goli kod zauzet krivim tipom -> fallback na prefiks
+        prefiksirani_barcode = f"A-{sifra}" if source == "artikl" else f"U-{sifra}"
+    else:
+        if source == "artikl":
+            # goli kod slobodan - kreiraj bez prefiksa, bez daljnje provjere
+            return create_roba(con, build_fields())
+        prefiksirani_barcode = f"U-{sifra}"  # usluga uvijek ide s prefiksom
+
+    existing = find_roba(con, idfirme, prefiksirani_barcode)
+    if existing is not None:
+        return existing
+
+    fields = build_fields()
+    fields["BARCODE"] = prefiksirani_barcode
+    return create_roba(con, fields)
+
+
     """
     Trazi robu u dva koraka, pa ako ne nadje - kreira novu (s prefiksiranim BARCODE):
 
